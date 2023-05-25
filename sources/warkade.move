@@ -26,8 +26,6 @@ module warkade::warkade {
         key:vector<String>,
         //types
         type:vector<String>,
-        fire_expiry:u64,
-        fire_increment:u64,
         }
     // ERRORS 
     const ENO_NOT_MODULE_CREATOR:u64=0;
@@ -38,9 +36,7 @@ module warkade::warkade {
         collection:String,
         description:String,
         base_uri:String,
-        price:u64,
-        fire_start:u64,
-        fire_increment:u64) 
+        price:u64,)
     {
         let owner_addr = signer::address_of(account);
         assert!(owner_addr==@warkade,ENO_NOT_MODULE_CREATOR);
@@ -79,8 +75,6 @@ module warkade::warkade {
                 key:vector<String>[],
                 //types
                 type:vector<String>[],
-                fire_expiry:fire_start+timestamp::now_seconds(),
-                fire_increment:fire_increment
         });
     }
     public entry fun initiate_layers(
@@ -142,7 +136,7 @@ module warkade::warkade {
     }
     public entry fun mint_warkade(
             receiver: &signer,
-            )acquires MintInfo
+    )acquires MintInfo
         {
             let receiver_addr = signer::address_of(receiver);
             assert!(exists<MintInfo>(@warkade),12);
@@ -160,10 +154,12 @@ module warkade::warkade {
             let x = vector<vector<u8>>[];
             let len = vector::length(&mint_info.maximum_values_layers);
             let i=0;
+            let now=timestamp::now_seconds();
             while(i < len)
             {
                 let max_value=vector::borrow(&mint_info.maximum_values_layers,i);
-                let vala = pseudo_random(receiver_addr,*max_value);
+                let vala = pseudo_random(receiver_addr,*max_value,now);
+                now = now +vala; // changing the value to bring some more randomness
                 let u8val= (vala as u8);
 
                 vector::push_back(&mut x, bcs::to_bytes<u8>(&u8val) );
@@ -182,17 +178,16 @@ module warkade::warkade {
             object::transfer( &resource_signer_from_cap, minted_token, receiver_addr);
             coin::transfer<AptosCoin>(receiver,@warkade , mint_info.price);   
             mint_info.last_mint=mint_info.last_mint+1; 
-            mint_info.fire_expiry = mint_info.fire_expiry + mint_info.fire_increment;
         }
 
 
     /// utility function
 
-    fun pseudo_random(add:address,remaining:u64):u64
+    fun pseudo_random(add:address,remaining:u64,timestamp:u64):u64
     {
         let x = bcs::to_bytes<address>(&add);
         let y = bcs::to_bytes<u64>(&remaining);
-        let z = bcs::to_bytes<u64>(&timestamp::now_seconds());
+        let z = bcs::to_bytes<u64>(&timestamp);
         vector::append(&mut x,y);
         vector::append(&mut x,z);
         let tmp = hash::sha2_256(x);
