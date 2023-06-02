@@ -5,9 +5,11 @@ module warkade::warkade {
     use std::vector;
     use aptos_std::from_bcs;
     use std::string::{Self, String};
-    use aptos_framework::object;
+    use aptos_framework::object::{Self,Object};
     use aptos_framework::timestamp;
-    use aptos_token_objects::aptos_token::{Self,AptosToken};
+    use aptos_token_objects::aptos_token::{Self,AptosToken,AptosCollection};
+    use aptos_token_objects::royalty;
+    use aptos_token_objects::collection;
     use aptos_framework::account;
     use aptos_framework::coin::{Self};
     use aptos_framework::aptos_coin::AptosCoin;
@@ -27,9 +29,16 @@ module warkade::warkade {
         //types
         type:vector<String>,
         }
+    struct Player has key{
+        mints_remaining:u64,
+        }
     // ERRORS 
     const ENO_NOT_MODULE_CREATOR:u64=0;
     const ENO_KEYS_MAX_VALUE_UNEQUAL:u64=1;
+    const ENO_INSUFFICIENT_AMOUNT:u64=2;
+    const ENO_AMOUNT_OUT_OF_RANGE:u64=3;
+    const ENO_NOT_INITIATED:u64=4;
+     const ENO_NO_CHANCES:u64=4;
 
     public entry fun initiate_collection(
         account: &signer,
@@ -59,8 +68,8 @@ module warkade::warkade {
             flag,
             flag,
             flag,
-            0,
-            1,
+            4, //numerator
+            100, //denominator
         );
         move_to<MintInfo>(account,
                 MintInfo{
@@ -134,12 +143,62 @@ module warkade::warkade {
             vector::push_back(&mut mint_info.type,string::utf8(b"u8") );
 
     }
-    public entry fun mint_warkade(
+    public entry fun update_royalty(
+        module_owner:&signer,
+        numerator:u64,
+        denominator:u64,
+        payee_address:address,
+    )acquires MintInfo
+    {
+        let owner_addr = signer::address_of(module_owner);
+        assert!(owner_addr==@warkade,ENO_NOT_MODULE_CREATOR);
+        let mint_info = borrow_global_mut<MintInfo>(@warkade);
+        let resource_signer_from_cap = account::create_signer_with_capability(&mint_info.treasury_cap);
+        let royalty = royalty::create(numerator, denominator, payee_address);
+        aptos_token::set_collection_royalties(&resource_signer_from_cap,
+                                            collection_object(&resource_signer_from_cap,&mint_info.collection_name),
+                                            royalty);
+    }
+    public entry fun engage(
+        receiver: &signer,
+        amount:u64
+    ) acquires Player,MintInfo
+    {
+        let receiver_addr = signer::address_of(receiver);
+        assert!(exists<MintInfo>(@warkade),ENO_NOT_INITIATED);
+        if (!exists<Player>(receiver_addr))
+        {
+            move_to<Player>(receiver,
+                Player{
+                    mints_remaining:0
+                });
+            assert!(amount >= 10000000,ENO_INSUFFICIENT_AMOUNT)
+        };
+        let player = borrow_global_mut<Player>(receiver_addr);
+        if ((player.mints_remaining > 0) && amount==0)
+        {
+            mint_warkade(receiver);
+            player.mints_remaining=player.mints_remaining-1;
+            return
+        };
+        assert!(!((player.mints_remaining == 0) && (amount==0)),ENO_NO_CHANCES);
+        if (amount > 0)
+        {
+            assert!((amount >= 10000000) && (amount <= 100000000),ENO_AMOUNT_OUT_OF_RANGE);
+            let number_mints = (2*amount)/(10000000);
+            player.mints_remaining=player.mints_remaining+number_mints-1;
+            coin::transfer<AptosCoin>(receiver,@warkade , amount);   
+            mint_warkade(receiver);
+            return
+        };
+
+    }
+    fun mint_warkade(
             receiver: &signer,
     )acquires MintInfo
         {
             let receiver_addr = signer::address_of(receiver);
-            assert!(exists<MintInfo>(@warkade),12);
+            assert!(exists<MintInfo>(@warkade),ENO_NOT_INITIATED);
             let mint_info = borrow_global_mut<MintInfo>(@warkade);
             let resource_signer_from_cap = account::create_signer_with_capability(&mint_info.treasury_cap);
             let baseuri = mint_info.base_uri;
@@ -176,13 +235,20 @@ module warkade::warkade {
                    x,);
             let minted_token = object::address_to_object<AptosToken>(object::create_guid_object_address(mint_info.resource_address, token_creation_num));
             object::transfer( &resource_signer_from_cap, minted_token, receiver_addr);
-            coin::transfer<AptosCoin>(receiver,@warkade , mint_info.price);   
             mint_info.last_mint=mint_info.last_mint+1; 
         }
 
-
+    #[view]
+    public fun mints_remain(player_addr: address): u64 acquires Player {
+        if (!exists<Player>(player_addr))
+        {
+            return 0
+        };
+        let player = borrow_global<Player>(player_addr);
+        player.mints_remaining
+    }
+    
     /// utility function
-
     fun pseudo_random(add:address,remaining:u64,timestamp:u64):u64
     {
         let x = bcs::to_bytes<address>(&add);
@@ -216,6 +282,10 @@ module warkade::warkade {
         vector::push_back(&mut v1, (num+48 as u8));
         vector::reverse(&mut v1);
         string::utf8(v1)
+    }
+    inline fun collection_object(creator: &signer, name: &String): Object<AptosCollection> {
+        let collection_addr = collection::create_collection_address(&signer::address_of(creator), name);
+        object::address_to_object<AptosCollection>(collection_addr)
     }
 
 }
