@@ -38,7 +38,8 @@ module warkade::warkade {
     const ENO_INSUFFICIENT_AMOUNT:u64=2;
     const ENO_AMOUNT_OUT_OF_RANGE:u64=3;
     const ENO_NOT_INITIATED:u64=4;
-     const ENO_NO_CHANCES:u64=4;
+    const ENO_NO_CHANCES:u64=5;
+    const ENO_NO_HEALTH:u64=6;
 
     public entry fun initiate_collection(
         account: &signer,
@@ -159,10 +160,10 @@ module warkade::warkade {
                                             collection_object(&resource_signer_from_cap,&mint_info.collection_name),
                                             royalty);
     }
-    public entry fun engage(
+    public entry fun deposit(
         receiver: &signer,
         amount:u64
-    ) acquires Player,MintInfo
+    )acquires Player
     {
         let receiver_addr = signer::address_of(receiver);
         assert!(exists<MintInfo>(@warkade),ENO_NOT_INITIATED);
@@ -172,73 +173,62 @@ module warkade::warkade {
                 Player{
                     mints_remaining:0
                 });
-            assert!(amount >= 10000000,ENO_INSUFFICIENT_AMOUNT)
         };
+        assert!((amount >= 10000000) && (amount <= 100000000),ENO_AMOUNT_OUT_OF_RANGE);
         let player = borrow_global_mut<Player>(receiver_addr);
-        if ((player.mints_remaining > 0) && amount==0)
-        {
-            mint_warkade(receiver);
-            player.mints_remaining=player.mints_remaining-1;
-            return
-        };
-        assert!(!((player.mints_remaining == 0) && (amount==0)),ENO_NO_CHANCES);
-        if (amount > 0)
-        {
-            assert!((amount >= 10000000) && (amount <= 100000000),ENO_AMOUNT_OUT_OF_RANGE);
-            let number_mints = (2*amount)/(10000000);
-            player.mints_remaining=player.mints_remaining+number_mints-1;
-            coin::transfer<AptosCoin>(receiver,@warkade , amount);   
-            mint_warkade(receiver);
-            return
-        };
+        let number_mints = (2*amount)/(10000000);
+        player.mints_remaining=player.mints_remaining+number_mints;
+        coin::transfer<AptosCoin>(receiver,@warkade , amount); 
 
     }
-    fun mint_warkade(
-            receiver: &signer,
-    )acquires MintInfo
+    public entry fun mint(
+        receiver: &signer,
+    ) acquires Player,MintInfo
+    {
+        let receiver_addr = signer::address_of(receiver);
+        assert!(exists<MintInfo>(@warkade),ENO_NOT_INITIATED);
+        assert!(exists<Player>(receiver_addr),ENO_NO_HEALTH);
+        let mint_info = borrow_global_mut<MintInfo>(@warkade);
+        let player = borrow_global_mut<Player>(receiver_addr);
+        assert!(player.mints_remaining >=1,ENO_NO_HEALTH);
+        let resource_signer_from_cap = account::create_signer_with_capability(&mint_info.treasury_cap);
+        let baseuri = mint_info.base_uri;
+        let mint_position=mint_info.last_mint+1;
+        string::append(&mut baseuri,num_str(mint_position));
+        let token_name = mint_info.collection_name;
+        string::append(&mut token_name,string::utf8(b" #"));
+        string::append(&mut token_name,num_str(mint_position));
+        string::append(&mut baseuri,string::utf8(b".json"));
+        let token_creation_num = account::get_guid_next_creation_num(mint_info.resource_address);
+        
+        let x = vector<vector<u8>>[];
+        let len = vector::length(&mint_info.maximum_values_layers);
+        let i=0;
+        let now=timestamp::now_seconds();
+        while(i < len)
         {
-            let receiver_addr = signer::address_of(receiver);
-            assert!(exists<MintInfo>(@warkade),ENO_NOT_INITIATED);
-            let mint_info = borrow_global_mut<MintInfo>(@warkade);
-            let resource_signer_from_cap = account::create_signer_with_capability(&mint_info.treasury_cap);
-            let baseuri = mint_info.base_uri;
-            let mint_position=mint_info.last_mint+1;
-            string::append(&mut baseuri,num_str(mint_position));
-            let token_name = mint_info.collection_name;
-            string::append(&mut token_name,string::utf8(b" #"));
-            string::append(&mut token_name,num_str(mint_position));
-            string::append(&mut baseuri,string::utf8(b".json"));
-            let token_creation_num = account::get_guid_next_creation_num(mint_info.resource_address);
-           
-            let x = vector<vector<u8>>[];
-            let len = vector::length(&mint_info.maximum_values_layers);
-            let i=0;
-            let now=timestamp::now_seconds();
-            while(i < len)
-            {
-                let max_value=vector::borrow(&mint_info.maximum_values_layers,i);
-                let vala = pseudo_random(receiver_addr,*max_value,now);
-                now = now +vala; // changing the value to bring some more randomness
-                let u8val= (vala as u8);
-
-                vector::push_back(&mut x, bcs::to_bytes<u8>(&u8val) );
-                i=i+1;
-            };
-            aptos_token::mint(
-                &resource_signer_from_cap,
-                mint_info.collection_name,
-                mint_info.description,
-                token_name,
-                baseuri,
-                mint_info.key,
-                mint_info.type,
-                   x,);
-            let minted_token = object::address_to_object<AptosToken>(object::create_guid_object_address(mint_info.resource_address, token_creation_num));
-            object::transfer( &resource_signer_from_cap, minted_token, receiver_addr);
-            mint_info.last_mint=mint_info.last_mint+1; 
-        }
-
-    #[view]
+            let max_value=vector::borrow(&mint_info.maximum_values_layers,i);
+            let vala = pseudo_random(receiver_addr,*max_value,now);
+            now = now +vala; // changing the value to bring some more randomness
+            let u8val= (vala as u8);
+            vector::push_back(&mut x, bcs::to_bytes<u8>(&u8val) );
+            i=i+1;
+        };
+        aptos_token::mint(
+            &resource_signer_from_cap,
+            mint_info.collection_name,
+            mint_info.description,
+            token_name,
+            baseuri,
+            mint_info.key,
+            mint_info.type,
+                x,);
+        let minted_token = object::address_to_object<AptosToken>(object::create_guid_object_address(mint_info.resource_address, token_creation_num));
+        object::transfer( &resource_signer_from_cap, minted_token, receiver_addr);
+        mint_info.last_mint=mint_info.last_mint+1; 
+        player.mints_remaining= player.mints_remaining-1;
+    }
+     #[view]
     public fun mints_remain(player_addr: address): u64 acquires Player {
         if (!exists<Player>(player_addr))
         {
