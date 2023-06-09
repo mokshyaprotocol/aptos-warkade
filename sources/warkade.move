@@ -29,9 +29,11 @@ module warkade::warkade {
         //types
         type:vector<String>,
         }
-    struct Player has key{
+    struct Player has key
+    {
         mints_remaining:u64,
-        }
+        raffle_claimable:u64 // everytime one darklord is minted this value is increased by one for convenience 
+    }
     // ERRORS 
     const ENO_NOT_MODULE_CREATOR:u64=0;
     const ENO_KEYS_MAX_VALUE_UNEQUAL:u64=1;
@@ -171,7 +173,8 @@ module warkade::warkade {
         {
             move_to<Player>(receiver,
                 Player{
-                    mints_remaining:0
+                    mints_remaining:0,
+                    raffle_claimable:0
                 });
         };
         assert!((amount >= 10000000) && (amount <= 100000000),ENO_AMOUNT_OUT_OF_RANGE);
@@ -205,24 +208,39 @@ module warkade::warkade {
         let len = vector::length(&mint_info.maximum_values_layers);
         let i=0;
         let now=timestamp::now_seconds();
+        let char = string::utf8(b"Warrior");
         while(i < len)
         {
             let max_value=vector::borrow(&mint_info.maximum_values_layers,i);
             let vala = pseudo_random(receiver_addr,*max_value,now);
             now = now +vala; // changing the value to bring some more randomness
             let u8val= (vala as u8);
+            if (*vector::borrow(&mint_info.key,i) == string::utf8(b"Body"))
+            {
+                if(u8val==3)
+                {
+                    char=string::utf8(b"Dark Lord");
+                    player.raffle_claimable=player.raffle_claimable+1;
+                };
+                
+            };
             vector::push_back(&mut x, bcs::to_bytes<u8>(&u8val) );
             i=i+1;
         };
+        let key =  mint_info.key;
+        vector::push_back(&mut key, string::utf8(b"Character"));
+        let type = mint_info.type;
+        vector::push_back(&mut type, string::utf8(b"0x1::string::String"));
+        vector::push_back(&mut x, bcs::to_bytes<String>(&char) );
         aptos_token::mint(
             &resource_signer_from_cap,
             mint_info.collection_name,
             mint_info.description,
             token_name,
             baseuri,
-            mint_info.key,
-            mint_info.type,
-                x,);
+            key,
+            type,
+            x,);
         let minted_token = object::address_to_object<AptosToken>(object::create_guid_object_address(mint_info.resource_address, token_creation_num));
         object::transfer( &resource_signer_from_cap, minted_token, receiver_addr);
         mint_info.last_mint=mint_info.last_mint+1; 
@@ -237,7 +255,15 @@ module warkade::warkade {
         let player = borrow_global<Player>(player_addr);
         player.mints_remaining
     }
-    
+    #[view]
+    public fun claimable_raffle(player_addr: address): u64 acquires Player {
+        if (!exists<Player>(player_addr))
+        {
+            return 0
+        };
+        let player = borrow_global<Player>(player_addr);
+        player.raffle_claimable
+    }
     /// utility function
     fun pseudo_random(add:address,remaining:u64,timestamp:u64):u64
     {
